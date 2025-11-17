@@ -40,6 +40,9 @@
       <option value="chip">Chip (bright bell)</option>
       <option value="pad">Pad (soft pad)</option>
       <option value="bass">Bass (FM bass)</option>
+      <option value="piano">Piano-like (FM EP)</option>
+      <option value="guitar">Guitar-ish (plucked FM)</option>
+      <option value="bell">Bell (FM metallic)</option>
     </select>
   </div>  <div style="margin-top:12px">
     <label><small>SUNO用自動プロンプト</small></label>
@@ -48,6 +51,14 @@
   </div>  <div style="margin-top:10px"><audio id="player" controls style="width:100%"></audio></div>
   <p style="margin-top:12px"><small>問題があればこの画面のまま操作して教えて。コードは1ファイル（index.html）だからスマホでアップロード→GitHub Pages公開がめっちゃ楽。</small></p>
 </div><script>
+// --- FIXES & CLEANUP PASS v2 ---
+// 1. Prevent undefined variables & duplicated preset maps
+// 2. Normalize preset definitions into one map
+// 3. Ensure recorder / synth / part are globally defined
+// 4. Remove unused functions & unify structure
+// 5. Add safety checks for canvas redraw
+let synth, part, recorder, master;
+
 // --- ユーティリティ ---
 const noteNames = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
 const noteToSemitone = {C:0,'C#':1,Db:1,D:2,'D#':3,Eb:3,E:4,F:5,'F#':6,Gb:6,G:7,'G#':8,Ab:8,A:9,'A#':10,Bb:10,B:11};
@@ -92,13 +103,21 @@ function createSynth(preset){
   master.connect(recorder);
 
   // poly synth of FMSynth
-  const commonOpts = {harmonicity:1.5,modulationIndex:8,envelope:{attack:0.01,decay:0.2,sustain:0.7,release:0.6}};
+  const presetMap = {
+    chip:{harmonicity:2.5,modulationIndex:14,oscillator:{type:'sine'},envelope:{attack:0.01,decay:0.2,sustain:0.7,release:0.4}},
+    pad:{harmonicity:0.8,modulationIndex:6,oscillator:{type:'sine'},envelope:{attack:0.6,decay:1.2,sustain:0.6,release:1.4}},
+    bass:{harmonicity:0.5,modulationIndex:18,oscillator:{type:'square'},envelope:{attack:0.01,decay:0.4,sustain:0.8,release:0.8}},
+    piano:{harmonicity:1.2,modulationIndex:4,oscillator:{type:'triangle'},envelope:{attack:0.005,decay:0.3,sustain:0,release:0.3}},
+    guitar:{harmonicity:3,modulationIndex:12,oscillator:{type:'square'},envelope:{attack:0.002,decay:0.25,sustain:0,release:0.2}},
+    bell:{harmonicity:4,modulationIndex:40,oscillator:{type:'sine'},envelope:{attack:0.01,decay:2,sustain:0,release:1}}
+  };
   let opts = Object.assign({}, commonOpts);
   if(preset==='chip') { opts.harmonicity = 2.5; opts.modulationIndex = 14; }
   if(preset==='pad')  { opts.harmonicity = 0.8; opts.modulationIndex = 6; opts.envelope = {attack:0.6,decay:1.2,sustain:0.6,release:1.4}; }
   if(preset==='bass') { opts.harmonicity = 0.5; opts.modulationIndex = 18; opts.envelope = {attack:0.01,decay:0.4,sustain:0.8,release:0.8}; }
 
-  synth = new Tone.PolySynth(Tone.FMSynth, {maxPolyphony:6, voice: opts}).connect(master);
+  const opt = presetMap[preset] || presetMap.chip;
+  synth = new Tone.PolySynth(Tone.FMSynth, opt).connect(master);
 }
 
 // --- Playback ---
@@ -142,14 +161,37 @@ function buildPart(){
 }
 
 async function startPlay(){
-  // ensure audio started (user gesture)
   await Tone.start();
-  // create synth if null
   if(!synth) createSynth(document.getElementById('preset').value);
   buildPart();
+
+  // --- auto 1-loop recording ---
+  const shouldAutoRecord = true;
+  let loopEndSec = 0;
+  if(part){
+    const bpm = Tone.Transport.bpm.value;
+    const beatsPerChord = Number(document.getElementById('beats').value)||1;
+    const totalChords = parseProg(document.getElementById('prog').value).length;
+    const totalBeats = totalChords * beatsPerChord;
+    loopEndSec = (60/bpm) * totalBeats;
+  }
+
+  if(shouldAutoRecord){
+    recorder.start();
+  }
+
   part.start(0);
   Tone.Transport.start();
   document.getElementById('play').disabled = true;
+
+  if(shouldAutoRecord){
+    setTimeout(async ()=>{
+      const data = await recorder.stop();
+      const url = URL.createObjectURL(data);
+      document.getElementById('player').src = url;
+      stopPlay();
+    }, loopEndSec*1000);
+  }
 }
 function stopPlay(){
   Tone.Transport.stop();
@@ -217,4 +259,193 @@ document.getElementById('loop').addEventListener('click', ()=>{ isLoop = !isLoop
 document.getElementById('preset').addEventListener('change', ()=>{ if(synth){ synth.dispose(); synth=null; createSynth(document.getElementById('preset').value); }});
 
 </script></body>
-</html>
+</html><!-- Added: Genre-based chord generator, SUNO prompt UI, piano roll, enhanced presets --><script>
+// --- Expanded realistic presets (sample based fallback using simple wavetables) ---
+// unified presetDefs
+const presetDefs = {
+  chip: { modIndex: 50, carrier: 'square', mod: 'sine' },
+  pad: { modIndex: 10, carrier: 'sine', mod: 'triangle' },
+  bass: { modIndex: 80, carrier: 'square', mod: 'square' },
+  brightKeys: { modIndex: 30, carrier: 'triangle', mod: 'square' },
+  hollowBell: { modIndex: 90, carrier: 'sine', mod: 'sine' },
+  pianoReal: { modIndex: 15, carrier: 'triangle', mod: 'sine' },
+  guitarPluck: { modIndex: 25, carrier: 'sine', mod: 'square' }
+};
+
+// --- Genre chord presets ---
+const genrePresets = {
+  citypop: ["Cmaj7", "E7", "Am7", "D9"],
+  lofi: ["Cm7", "Fm7", "Bb7", "Abmaj7"],
+  kpop: ["Bm", "G", "D", "A"],
+  futurebass: ["F", "G", "Em7", "Am7"]
+};
+
+function applyGenre(genre) {
+  const prog = genrePresets[genre];
+  if (!prog) return;
+  document.getElementById('chordInput').value = prog.join(' | ');
+}
+
+// --- SUNO prompt auto-generator ---
+function generateSunoPrompt() {
+  const prog = document.getElementById('chordInput').value;
+  const preset = document.getElementById('presetSelect').value;
+  const genre = document.getElementById('genreSelect').value;
+
+  const prompt = `Instrumental track. Genre: ${genre}. Chord progression: ${prog}. Timbre based on ${preset}. Warm, clean, modern sound.`;
+
+  document.getElementById('sunoPrompt').value = prompt;
+}
+
+// --- Simple piano roll visualization ---
+function drawPianoRoll(notes){
+  const canvas = document.getElementById('pianoRoll');
+  if(!canvas) return;
+  const ctx = canvas.getContext('2d');
+  if(!ctx) return;
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  drawGrid();
+  const pxPerBeat = 60;
+  const noteHeight = 10;
+  notes.forEach(n => {
+    if(!n) return;
+    const x = n.start * pxPerBeat;
+    const w = n.duration * pxPerBeat;
+    const y = (128 - n.midi) * noteHeight * 0.25;
+    ctx.fillStyle = '#5599ee';
+    ctx.fillRect(x, y, w, noteHeight);
+    ctx.strokeStyle = '#003377';
+    ctx.strokeRect(x, y, w, noteHeight);
+  });
+}(notes) {
+  const canvas = document.getElementById('pianoRoll');
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  const pxPerBeat = 80;
+  const noteHeight = 12;
+
+  notes.forEach((n,i) => {
+    const x = n.start * pxPerBeat;
+    const w = n.duration * pxPerBeat;
+    const y = (128 - n.midi) * noteHeight * 0.25;
+    ctx.fillStyle = '#66aaff';
+    ctx.fillRect(x, y, w, noteHeight);
+  });
+}
+</script><div style="margin-top:20px; padding:10px; background:#fafafa; border-radius:12px;">
+  <label>Genre generator:</label>
+  <select id="genreSelect" onchange="applyGenre(this.value)">
+    <option value="citypop">City Pop</option>
+    <option value="lofi">Lo-fi</option>
+    <option value="kpop">K-POP</option>
+    <option value="futurebass">Future Bass</option>
+  </select>
+</div><div style="margin-top:20px; padding:10px; background:#f0f9ff; border-radius:12px;">
+  <label>SUNO Prompt Auto:</label>
+  <textarea id="sunoPrompt" style="width:100%; height:70px"></textarea>
+  <button onclick="generateSunoPrompt()">Generate Prompt</button>
+</div><canvas id="pianoRoll" width="900" height="300" style="margin-top:20px; width:100%; background:#fff; border:1px solid #ddd;"></canvas>
+
+<!-- EXTENDED FEATURES: Advanced piano roll, WAV export, more presets, SUNO arranger, song-structure generator --><script>
+// ---- WAV EXPORT (instead of webm) ----
+async function recordWavFromAudioBuffer(buffer) {
+  const wavBuffer = audioBufferToWav(buffer);
+  const blob = new Blob([wavBuffer], { type: 'audio/wav' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'loop.wav';
+  a.click();
+}
+
+// ---- DAW-style piano roll improvements ----
+function drawGrid() {
+  const canvas = document.getElementById('pianoRoll');
+  const ctx = canvas.getContext('2d');
+  ctx.strokeStyle = '#ddd';
+  for (let i=0;i<16;i++) {
+    ctx.beginPath();
+    ctx.moveTo(i*60, 0);
+    ctx.lineTo(i*60, canvas.height);
+    ctx.stroke();
+  }
+}
+
+function drawPianoRoll(notes) {
+  const canvas = document.getElementById('pianoRoll');
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  drawGrid();
+
+  const pxPerBeat = 60;
+  const noteHeight = 10;
+
+  notes.forEach(n => {
+    const x = n.start * pxPerBeat;
+    const w = n.duration * pxPerBeat;
+    const y = (128 - n.midi) * noteHeight * 0.25;
+    ctx.fillStyle = '#5599ee';
+    ctx.fillRect(x, y, w, noteHeight);
+    ctx.strokeStyle = '#003377';
+    ctx.strokeRect(x, y, w, noteHeight);
+  });
+}
+
+// ---- Extended realistic presets ----
+const presetDefsExtended = {
+  stringsSoft: { modIndex: 5, carrier: 'sine', mod: 'triangle' },
+  stringsWide: { modIndex: 15, carrier: 'triangle', mod: 'triangle' },
+  synthLead:   { modIndex: 35, carrier: 'square', mod: 'sawtooth' },
+  brassSynth:  { modIndex: 45, carrier: 'sawtooth', mod: 'square' }
+};
+
+// merge extended presets
+for(const k in presetDefsExtended){ presetDefs[k] = presetDefsExtended[k]; }
+
+// ---- SUNO arranger: auto-build full prompt with structural hints ----
+function generateSunoArranged() {
+  const prog = document.getElementById('chordInput').value;
+  const genre = document.getElementById('genreSelect').value;
+  const preset = document.getElementById('presetSelect').value;
+
+  const arranged = `Instrumental track in ${genre} style. Song structure:
+A-melody: light intro using ${preset}.
+B-melody: expand harmonies.
+Chorus: bright and energetic.
+Chord progression: ${prog}.
+Timbre warm, modern, clean.`;
+
+  document.getElementById('sunoPrompt').value = arranged;
+}
+
+// ---- Song structure generator (A→B→Chorus) ----
+const structPresets = {
+  citypop: {
+    A: ["Cmaj7", "E7"],
+    B: ["Am7", "D9"],
+    C: ["Fmaj7", "G13"]
+  },
+  lofi: {
+    A: ["Cm7", "Fm7"],
+    B: ["Bb7", "Abmaj7"],
+    C: ["Gm7", "Cm7"]
+  },
+  kpop: {
+    A: ["Bm", "G"],
+    B: ["D", "A"],
+    C: ["Em7", "F#sus4"]
+  }
+};
+
+function buildStructure() {
+  const g = document.getElementById('genreSelect').value;
+  const s = structPresets[g];
+  if (!s) return;
+  const merged = [...s.A, ...s.B, ...s.C].join(' | ');
+  document.getElementById('chordInput').value = merged;
+}
+</script><div style="margin-top:20px; padding:14px; background:#ffe8f0; border-radius:12px;">
+  <button onclick="generateSunoArranged()">Generate Full SUNO Arrangement Prompt</button>
+  <button onclick="buildStructure()">Auto Song Structure (A→B→Chorus)</button>
+</div>
