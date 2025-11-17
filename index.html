@@ -1,0 +1,99 @@
+<!DOCTYPE html><html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FM Synth MIDI Generator</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/midiwriter-js@latest/dist/MidiWriter.min.js"></script>
+<style>
+body { font-family: sans-serif; padding: 20px; }
+textarea { width: 100%; height: 100px; }
+button { margin: 5px 0; padding: 10px; }
+</style>
+</head>
+<body>
+<h2>FM Synth / Text → MIDI → Preview</h2>
+<textarea id="prog">Cmaj7 | Am7 D7 | Gmaj7 | Em7 A7 | Dmaj7</textarea>
+<br>
+Tempo: <input id="tempo" type="number" value="100" style="width:60px;">
+<br>
+<button onclick="playSeq()">▶ 再生</button>
+<button onclick="stopSeq()">■ 停止</button>
+<button onclick="makeMIDI()">MIDI DL</button>
+<button onclick="recStart()">録音開始</button>
+<button onclick="recStop()">録音停止</button>
+<audio id="player" controls></audio><h3>SUNO プロンプト（自動生成）</h3>
+<button onclick="genPrompt()">プロンプト生成</button>
+<textarea id="prompt" style="height:120px;"></textarea><script>
+let synth = new Tone.FMSynth().toDestination();
+let part; let recorder = new Tone.Recorder();
+synth.connect(recorder);
+
+const noteNames=["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+const noteToMidi={C:0,"C#":1,Db:1,D:2,"D#":3,Eb:3,E:4,F:5,"F#":6,Gb:6,G:7,"G#":8,Ab:8,A:9,"A#":10,Bb:10,B:11};
+
+function parseProg(t){
+ return t.split('|').flatMap(b=>b.trim().split(/[, ]+/).filter(x=>x));
+}
+
+function chordToNotes(ch,oct=4){
+ const m=ch.match(/^[A-G](#|b)?/); if(!m) return[];
+ const root=m[0]; let q=ch.slice(root.length).toLowerCase();
+ let base=12*(oct+1)+noteToMidi[root];
+ let ints=[0,4,7];
+ if(q.startsWith('m')&&!q.startsWith('maj')) ints=[0,3,7];
+ if(q.includes('maj7')) ints=[0,4,7,11];
+ if(q.includes('m7')) ints=[0,3,7,10];
+ if(q=="7") ints=[0,4,7,10];
+ if(q.includes('sus2')) ints=[0,2,7];
+ if(q.includes('sus4')) ints=[0,5,7];
+ if(q.includes('9')) ints=[0,4,7,14];
+ return ints.map(i=>base+i);
+}
+
+function playSeq(){
+ stopSeq(); Tone.start();
+ let chords=parseProg(document.getElementById('prog').value);
+ let tempo=Number(document.getElementById('tempo').value);
+ Tone.Transport.bpm.value=tempo;
+ let ev=[]; chords.forEach((c,i)=>{
+   ev.push([i, chordToNotes(c).map(n=>Tone.Frequency(n,'midi').toNote())]);
+ });
+ part=new Tone.Part((time,val)=>{
+   synth.triggerAttackRelease(val,"1n",time);
+ }, ev);
+ part.start(0);
+ Tone.Transport.start();
+}
+
+function stopSeq(){
+ Tone.Transport.stop(); if(part){part.stop(); part.dispose(); part=null;}
+}
+
+function makeMIDI(){
+ let chords=parseProg(document.getElementById('prog').value);
+ let tempo=Number(document.getElementById('tempo').value);
+ let tr=new MidiWriter.Track(); tr.setTempo(tempo);
+ chords.forEach(ch=>{
+   let ns=chordToNotes(ch).map(n=>noteNames[n%12]+(Math.floor(n/12)-1));
+   tr.addEvent(new MidiWriter.ChordEvent({pitch:ns,duration:'4'}));
+ });
+ let w=new MidiWriter.Writer(tr);
+ let blob=new Blob([w.buildFile()],{type:'audio/midi'});
+ let a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='prog.mid'; a.click();
+}
+
+async function recStart(){ Tone.start(); recorder.start(); playSeq(); }
+async function recStop(){ let b=await recorder.stop(); stopSeq(); let url=URL.createObjectURL(b); document.getElementById('player').src=url; }
+
+function genPrompt(){
+ let t=document.getElementById('tempo').value;
+ let prog=document.getElementById('prog').value;
+ document.getElementById('prompt').value=
+ `Instrumental retro-FM game track. Tempo ${t} BPM.
+Chord progression: ${prog}.
+Style: nostalgic, catchy, metallic FM bells + soft FM pad.
+Loop-friendly 8 bars. No vocals.`;
+}
+</script></body>
+</html>
