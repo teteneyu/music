@@ -1,99 +1,220 @@
 <!DOCTYPE html><html lang="ja">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>FM Synth MIDI Generator</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>FM Retro — Text→MIDI→Preview (Mobile)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/midiwriter-js@latest/dist/MidiWriter.min.js"></script>
 <style>
-body { font-family: sans-serif; padding: 20px; }
-textarea { width: 100%; height: 100px; }
-button { margin: 5px 0; padding: 10px; }
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,'Hiragino Kaku Gothic ProN',"Noto Sans JP",sans-serif;padding:16px;background:#0b1020;color:#e6eef8}
+  .card{background:#0f1724;padding:14px;border-radius:12px;box-shadow:0 6px 18px rgba(0,0,0,0.6);}
+  textarea{width:100%;min-height:96px;padding:10px;border-radius:8px;border:none;background:#081026;color:inherit}
+  button{padding:10px 12px;border-radius:8px;border:none;background:#3b82f6;color:#fff;font-weight:600}
+  .row{display:flex;gap:8px;align-items:center;margin:8px 0}
+  select,input{padding:8px;border-radius:8px;border:none;background:#081026;color:inherit}
+  small{color:#9fb0d8}
+  .controls{display:flex;gap:8px;flex-wrap:wrap}
 </style>
 </head>
 <body>
-<h2>FM Synth / Text → MIDI → Preview</h2>
-<textarea id="prog">Cmaj7 | Am7 D7 | Gmaj7 | Em7 A7 | Dmaj7</textarea>
-<br>
-Tempo: <input id="tempo" type="number" value="100" style="width:60px;">
-<br>
-<button onclick="playSeq()">▶ 再生</button>
-<button onclick="stopSeq()">■ 停止</button>
-<button onclick="makeMIDI()">MIDI DL</button>
-<button onclick="recStart()">録音開始</button>
-<button onclick="recStop()">録音停止</button>
-<audio id="player" controls></audio><h3>SUNO プロンプト（自動生成）</h3>
-<button onclick="genPrompt()">プロンプト生成</button>
-<textarea id="prompt" style="height:120px;"></textarea><script>
-let synth = new Tone.FMSynth().toDestination();
-let part; let recorder = new Tone.Recorder();
-synth.connect(recorder);
+<div class="card">
+  <h2>FM Retro — Text → MIDI → Preview</h2>
+  <p style="margin:0 0 8px 0"><small>スマホ向けに最小・確実な機能だけ残した簡易音源。音が鳴らない時は必ず「再生」をタップしてブラウザの音声再生権限を起動してね。</small></p><label><small>コード進行（バーは | で区切る）</small></label>
 
-const noteNames=["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
-const noteToMidi={C:0,"C#":1,Db:1,D:2,"D#":3,Eb:3,E:4,F:5,"F#":6,Gb:6,G:7,"G#":8,Ab:8,A:9,"A#":10,Bb:10,B:11};
+  <textarea id="prog">Cmaj7 | Am7 D7 | Gmaj7 | Em7 A7 | Dmaj7</textarea>  <div class="row">
+    <label><small>テンポ</small></label>
+    <input id="tempo" type="number" value="100" style="width:88px" />
+    <label><small>オクターブ</small></label>
+    <select id="octave"><option>3</option><option selected>4</option><option>5</option></select>
+    <label><small>1コードの長さ</small></label>
+    <select id="beats"><option value="1">1拍 (4n)</option><option value="2">2拍 (2n)</option><option value="4">4拍 (1m)</option></select>
+  </div>  <div class="row controls">
+    <button id="play">▶ 再生</button>
+    <button id="stop">■ 停止</button>
+    <button id="loop">🔁 ループ: OFF</button>
+    <button id="midi">⬇ MIDI DL</button>
+    <button id="rec">● 録音</button>
+  </div>  <div style="margin-top:8px">
+    <label><small>FM プリセット</small></label>
+    <select id="preset">
+      <option value="chip">Chip (bright bell)</option>
+      <option value="pad">Pad (soft pad)</option>
+      <option value="bass">Bass (FM bass)</option>
+    </select>
+  </div>  <div style="margin-top:12px">
+    <label><small>SUNO用自動プロンプト</small></label>
+    <div class="row"><button id="gen">プロンプト生成</button></div>
+    <textarea id="prompt" style="min-height:96px">Instrumental retro-FM game track. Tempo 100 BPM. Chord progression: Cmaj7 | Am7 D7 | Gmaj7 | Em7 A7 | Dmaj7. Style: nostalgic, catchy, metallic FM bells + soft FM pad. Loop-friendly 8 bars. No vocals.</textarea>
+  </div>  <div style="margin-top:10px"><audio id="player" controls style="width:100%"></audio></div>
+  <p style="margin-top:12px"><small>問題があればこの画面のまま操作して教えて。コードは1ファイル（index.html）だからスマホでアップロード→GitHub Pages公開がめっちゃ楽。</small></p>
+</div><script>
+// --- ユーティリティ ---
+const noteNames = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+const noteToSemitone = {C:0,'C#':1,Db:1,D:2,'D#':3,Eb:3,E:4,F:5,'F#':6,Gb:6,G:7,'G#':8,Ab:8,A:9,'A#':10,Bb:10,B:11};
 
-function parseProg(t){
- return t.split('|').flatMap(b=>b.trim().split(/[, ]+/).filter(x=>x));
+function parseProg(text){
+  return text.split('|').flatMap(bar=>bar.trim().split(/[ ,]+/).filter(Boolean));
+}
+function chordToMidi(chord, octave=4){
+  const m = chord.match(/^[A-G](#|b)?/); if(!m) return [];
+  const root = m[0]; const quality = chord.slice(root.length).toLowerCase();
+  const semitone = noteToSemitone[root];
+  const base = 12*(octave+1) + semitone;
+  let ints = [0,4,7];
+  if(quality.startsWith('m') && !quality.startsWith('maj')) ints=[0,3,7];
+  if(quality.includes('maj7')) ints=[0,4,7,11];
+  if(quality.includes('m7')) ints=[0,3,7,10];
+  if(quality==='7') ints=[0,4,7,10];
+  if(quality.includes('sus2')) ints=[0,2,7];
+  if(quality.includes('sus4')) ints=[0,5,7];
+  if(quality.includes('9')) ints=[0,4,7,14];
+  return ints.map(i=>base+i);
+}
+function midiToNoteName(midi){
+  const oct = Math.floor(midi/12)-1; const nn = noteNames[midi%12]; return nn+oct;
 }
 
-function chordToNotes(ch,oct=4){
- const m=ch.match(/^[A-G](#|b)?/); if(!m) return[];
- const root=m[0]; let q=ch.slice(root.length).toLowerCase();
- let base=12*(oct+1)+noteToMidi[root];
- let ints=[0,4,7];
- if(q.startsWith('m')&&!q.startsWith('maj')) ints=[0,3,7];
- if(q.includes('maj7')) ints=[0,4,7,11];
- if(q.includes('m7')) ints=[0,3,7,10];
- if(q=="7") ints=[0,4,7,10];
- if(q.includes('sus2')) ints=[0,2,7];
- if(q.includes('sus4')) ints=[0,5,7];
- if(q.includes('9')) ints=[0,4,7,14];
- return ints.map(i=>base+i);
+// --- Tone / synth setup ---
+let synth = null; // PolySynth
+let master = null; // Gain node to route to recorder+destination
+let recorder = null;
+let part = null; // Tone.Part
+let isLoop = false;
+let isRecording = false;
+
+function createSynth(preset){
+  // dispose if exists
+  if(synth){ synth.dispose(); master.dispose(); recorder=null; }
+  // master gain
+  master = new Tone.Gain(0.9).toDestination();
+  // recorder attached to master
+  recorder = new Tone.Recorder();
+  master.connect(recorder);
+
+  // poly synth of FMSynth
+  const commonOpts = {harmonicity:1.5,modulationIndex:8,envelope:{attack:0.01,decay:0.2,sustain:0.7,release:0.6}};
+  let opts = Object.assign({}, commonOpts);
+  if(preset==='chip') { opts.harmonicity = 2.5; opts.modulationIndex = 14; }
+  if(preset==='pad')  { opts.harmonicity = 0.8; opts.modulationIndex = 6; opts.envelope = {attack:0.6,decay:1.2,sustain:0.6,release:1.4}; }
+  if(preset==='bass') { opts.harmonicity = 0.5; opts.modulationIndex = 18; opts.envelope = {attack:0.01,decay:0.4,sustain:0.8,release:0.8}; }
+
+  synth = new Tone.PolySynth(Tone.FMSynth, {maxPolyphony:6, voice: opts}).connect(master);
 }
 
-function playSeq(){
- stopSeq(); Tone.start();
- let chords=parseProg(document.getElementById('prog').value);
- let tempo=Number(document.getElementById('tempo').value);
- Tone.Transport.bpm.value=tempo;
- let ev=[]; chords.forEach((c,i)=>{
-   ev.push([i, chordToNotes(c).map(n=>Tone.Frequency(n,'midi').toNote())]);
- });
- part=new Tone.Part((time,val)=>{
-   synth.triggerAttackRelease(val,"1n",time);
- }, ev);
- part.start(0);
- Tone.Transport.start();
+// --- Playback ---
+function buildPart(){
+  const prog = parseProg(document.getElementById('prog').value);
+  const tempo = Number(document.getElementById('tempo').value) || 100;
+  const octave = Number(document.getElementById('octave').value) || 4;
+  const beatsPerChord = Number(document.getElementById('beats').value) || 1;
+
+  // dispose old part
+  if(part){ part.stop(); part.dispose(); part = null; }
+
+  Tone.Transport.bpm.value = tempo;
+
+  const events = [];
+  prog.forEach((ch, i) => {
+    const midiNotes = chordToMidi(ch, octave);
+    if(midiNotes.length===0) return;
+    const noteNames = midiNotes.map(m=>midiToNoteName(m));
+    // compute transport time string: bars:quarters:sixteenths
+    const beats = i * beatsPerChord; // counts of quarter-note beats from start
+    const bars = Math.floor(beats / 4);
+    const quarters = Math.floor(beats % 4);
+    const timeStr = `${bars}:${quarters}:0`;
+    events.push({time: timeStr, notes: noteNames, duration: beatsPerChord===1? '4n' : beatsPerChord===2? '2n':'1m'});
+  });
+
+  part = new Tone.Part((time, value) => {
+    synth.triggerAttackRelease(value.notes, value.duration, time);
+  }, events);
+
+  // loop handling: set loopEnd to length in measures
+  if(isLoop && events.length>0){
+    // compute end bars
+    const lastBeats = (events.length) * Number(document.getElementById('beats').value);
+    const endBars = Math.ceil(lastBeats/4);
+    part.loop = true; part.loopEnd = `${endBars}m`;
+  } else {
+    part.loop = false;
+  }
 }
 
-function stopSeq(){
- Tone.Transport.stop(); if(part){part.stop(); part.dispose(); part=null;}
+async function startPlay(){
+  // ensure audio started (user gesture)
+  await Tone.start();
+  // create synth if null
+  if(!synth) createSynth(document.getElementById('preset').value);
+  buildPart();
+  part.start(0);
+  Tone.Transport.start();
+  document.getElementById('play').disabled = true;
+}
+function stopPlay(){
+  Tone.Transport.stop();
+  if(part){ part.stop(); part.dispose(); part = null; }
+  document.getElementById('play').disabled = false;
 }
 
-function makeMIDI(){
- let chords=parseProg(document.getElementById('prog').value);
- let tempo=Number(document.getElementById('tempo').value);
- let tr=new MidiWriter.Track(); tr.setTempo(tempo);
- chords.forEach(ch=>{
-   let ns=chordToNotes(ch).map(n=>noteNames[n%12]+(Math.floor(n/12)-1));
-   tr.addEvent(new MidiWriter.ChordEvent({pitch:ns,duration:'4'}));
- });
- let w=new MidiWriter.Writer(tr);
- let blob=new Blob([w.buildFile()],{type:'audio/midi'});
- let a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='prog.mid'; a.click();
+// --- MIDI export ---
+function exportMIDI(){
+  const prog = parseProg(document.getElementById('prog').value);
+  const tempo = Number(document.getElementById('tempo').value) || 100;
+  const octave = Number(document.getElementById('octave').value) || 4;
+  const track = new MidiWriter.Track(); track.setTempo(tempo);
+  prog.forEach(ch => {
+    const midi = chordToMidi(ch, octave);
+    if(midi.length===0) return;
+    const names = midi.map(m=>midiToNoteName(m));
+    track.addEvent(new MidiWriter.ChordEvent({pitch: names, duration: '4'}));
+  });
+  const writer = new MidiWriter.Writer(track);
+  const blob = new Blob([writer.buildFile()], {type:'audio/midi'});
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'progression.mid'; a.click();
 }
 
-async function recStart(){ Tone.start(); recorder.start(); playSeq(); }
-async function recStop(){ let b=await recorder.stop(); stopSeq(); let url=URL.createObjectURL(b); document.getElementById('player').src=url; }
+// --- Recorder (WAV) ---
+async function startRecording(){
+  if(!synth) createSynth(document.getElementById('preset').value);
+  await Tone.start();
+  recorder.start();
+  isRecording = true;
+  document.getElementById('rec').textContent = '■ 録音中';
+  startPlay();
+}
+async function stopRecording(){
+  if(!isRecording) return;
+  const recording = await recorder.stop(); // Blob
+  const url = URL.createObjectURL(recording);
+  document.getElementById('player').src = url;
+  isRecording = false;
+  document.getElementById('rec').textContent = '● 録音';
+  stopPlay();
+}
 
+// --- Prompt gen ---
 function genPrompt(){
- let t=document.getElementById('tempo').value;
- let prog=document.getElementById('prog').value;
- document.getElementById('prompt').value=
- `Instrumental retro-FM game track. Tempo ${t} BPM.
-Chord progression: ${prog}.
-Style: nostalgic, catchy, metallic FM bells + soft FM pad.
-Loop-friendly 8 bars. No vocals.`;
+  const tempo = Number(document.getElementById('tempo').value)||100;
+  const prog = document.getElementById('prog').value.trim();
+  const preset = document.getElementById('preset').value;
+  const mood = preset==='chip'? 'bright nostalgic':'lush and warm';
+  const txt = `Instrumental retro-FM game track. Tempo ${tempo} BPM. Chord progression: ${prog}. Style: ${mood}, metallic FM bells, tight bass, loop-friendly. No vocals.`;
+  document.getElementById('prompt').value = txt;
 }
+
+// --- Event wiring ---
+document.getElementById('play').addEventListener('click', async ()=>{ try{ await startPlay(); }catch(e){ alert('再生に失敗しました：'+e.message); }});
+document.getElementById('stop').addEventListener('click', ()=>stopPlay());
+document.getElementById('midi').addEventListener('click', ()=>exportMIDI());
+document.getElementById('rec').addEventListener('click', async ()=>{
+  if(!isRecording) await startRecording(); else await stopRecording();
+});
+document.getElementById('gen').addEventListener('click', ()=>genPrompt());
+document.getElementById('loop').addEventListener('click', ()=>{ isLoop = !isLoop; document.getElementById('loop').textContent = `🔁 ループ: ${isLoop? 'ON':'OFF'}`; try{ buildPart(); }catch(e){} });
+
+// ensure presets recreate synth
+document.getElementById('preset').addEventListener('change', ()=>{ if(synth){ synth.dispose(); synth=null; createSynth(document.getElementById('preset').value); }});
+
 </script></body>
 </html>
